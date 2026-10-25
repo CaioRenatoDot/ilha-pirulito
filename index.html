@@ -1,0 +1,368 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ilha Pirulito — Three.js</title>
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600;700&family=Nunito:wght@700;800&display=swap">
+<style>
+  *{box-sizing:border-box}
+  html,body{height:100%;margin:0;background:#8BD3F0;color:#3B2B4A;
+            font-family:"Nunito",system-ui,sans-serif;overflow:hidden}
+
+  #titulo{position:fixed;top:16px;left:18px;pointer-events:none}
+  #titulo h1{font-family:"Fredoka",system-ui,sans-serif;font-weight:600;font-size:1.5rem;margin:0;
+             color:#FFFBF2;text-shadow:0 2px 6px rgba(59,43,74,.5);line-height:1.1}
+
+  #painel{position:fixed;top:16px;right:16px;width:270px;max-height:calc(100% - 32px);overflow-y:auto;
+          background:#FFFBF2;border:1px solid #DDD0BC;border-radius:10px;
+          box-shadow:0 4px 14px rgba(59,43,74,.22);padding:14px}
+  h2{font-family:"Fredoka",system-ui,sans-serif;font-weight:600;font-size:.95rem;margin:0 0 3px}
+  .sub{font-size:.72rem;color:#7A6388;margin:0 0 12px}
+  .rotulo{font-family:"Fredoka",system-ui,sans-serif;font-weight:500;font-size:.72rem;
+          color:#7A6388;margin:0 0 7px}
+
+  button{width:100%;display:flex;align-items:center;gap:8px;margin-bottom:5px;padding:8px 10px;
+         cursor:pointer;background:#F7EEDC;color:#3B2B4A;border:1px solid #DDD0BC;border-radius:7px;
+         font-family:"Fredoka",system-ui,sans-serif;font-weight:500;font-size:.84rem;text-align:left}
+  button:hover{background:#F3E6CE}
+  button.ativo{background:#3FC9B4;border-color:#2FA695;color:#06302b}
+  .bolinha{width:8px;height:8px;border-radius:50%;background:#7A6388;flex:none}
+  button.ativo .bolinha{background:#06302b}
+  .dur{margin-left:auto;font-size:.7rem;color:#7A6388}
+  button.ativo .dur{color:#06302b}
+
+  #status{font-size:.73rem;line-height:1.5;color:#7A6388;margin:12px 0 0}
+  #dica{position:fixed;left:18px;bottom:16px;font-family:"Fredoka",system-ui,sans-serif;font-weight:500;
+        font-size:.74rem;color:#FFFBF2;text-shadow:0 2px 6px rgba(59,43,74,.5)}
+</style>
+</head>
+<body>
+
+<div id="titulo"><h1>Ilha Pirulito</h1></div>
+<div id="painel">
+  <h2 id="nome">Carregando…</h2>
+  <p class="sub" id="origem"></p>
+  <p class="rotulo">Ações de animação</p>
+  <div id="acoes"></div>
+  <p id="status"></p>
+</div>
+<p id="dica">arrastar = girar · scroll = zoom · direito = deslizar</p>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { GLTFLoader }    from 'three/addons/loaders/GLTFLoader.js';
+import { DRACOLoader }   from 'three/addons/loaders/DRACOLoader.js';
+
+// ===================================================================
+// 1. CONFIGURAÇÃO — caminho do modelo
+// ===================================================================
+const MODELO = './modelos/robo.glb';
+
+// ===================================================================
+// 2. CENA, CÂMERA, RENDERIZADOR
+// ===================================================================
+const cena = new THREE.Scene();
+cena.fog = new THREE.Fog(0x8BD3F0, 60, 160);
+
+const camera = new THREE.PerspectiveCamera(46, innerWidth / innerHeight, 0.1, 400);
+camera.position.set(7, 5, 10);
+
+const renderizador = new THREE.WebGLRenderer({ antialias: true });
+renderizador.setSize(innerWidth, innerHeight);
+renderizador.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderizador.shadowMap.enabled = true;
+renderizador.shadowMap.type = THREE.PCFSoftShadowMap;
+document.body.appendChild(renderizador.domElement);
+
+const controles = new OrbitControls(camera, renderizador.domElement);
+controles.target.set(0, 2.5, 0);
+controles.enableDamping = true;
+controles.maxPolarAngle = Math.PI * 0.56;
+
+// céu de desenho animado, em três faixas de cor
+cena.add(new THREE.Mesh(
+  new THREE.SphereGeometry(190, 32, 16),
+  new THREE.ShaderMaterial({
+    side: THREE.BackSide, depthWrite: false,
+    uniforms: { topo:{value:new THREE.Color(0x4FB8EE)},
+                meio:{value:new THREE.Color(0x9FE2F7)},
+                base:{value:new THREE.Color(0xFFE2A8)} },
+    vertexShader: `varying vec3 p;
+      void main(){ p = position; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }`,
+    fragmentShader: `uniform vec3 topo; uniform vec3 meio; uniform vec3 base; varying vec3 p;
+      void main(){
+        float h = clamp((normalize(p).y + 0.35) / 1.15, 0.0, 1.0);
+        vec3 c = h < 0.45 ? mix(base, meio, h / 0.45) : mix(meio, topo, (h - 0.45) / 0.55);
+        gl_FragColor = vec4(c, 1.0);
+      }`
+  })
+));
+
+// ===================================================================
+// 3. LUZES — quentes e chapadas
+// ===================================================================
+cena.add(new THREE.HemisphereLight(0xFFF3D6, 0x9BE07A, 0.8));
+cena.add(new THREE.AmbientLight(0xffffff, 0.35));
+const sol = new THREE.DirectionalLight(0xFFF4DA, 1.1);
+sol.position.set(14, 20, 11);
+sol.castShadow = true;
+sol.shadow.mapSize.set(2048, 2048);
+Object.assign(sol.shadow.camera, { left:-22, right:22, top:22, bottom:-22, near:1, far:60 });
+sol.shadow.bias = -0.0012;
+cena.add(sol);
+
+// ===================================================================
+// 4. VISUAL CARTOON: material toon + contorno preto
+// ===================================================================
+const degraus = new Uint8Array([108, 170, 225, 255]);        // 4 degraus de luz
+const rampa = new THREE.DataTexture(degraus, degraus.length, 1, THREE.RedFormat);
+rampa.minFilter = rampa.magFilter = THREE.NearestFilter;
+rampa.generateMipmaps = false;
+rampa.needsUpdate = true;
+
+const TINTA = 0x3B2B4A;
+const cache = {};
+const toon = cor => cache[cor] || (cache[cor] = new THREE.MeshToonMaterial({ color: cor, gradientMap: rampa }));
+const matContorno = new THREE.MeshBasicMaterial({ color: TINTA, side: THREE.BackSide });
+
+// cria a malha já com o contorno (uma cópia inflada, virada do avesso)
+function peca(geo, cor, espessura = 1.07) {
+  const m = new THREE.Mesh(geo, toon(cor));
+  m.castShadow = m.receiveShadow = true;
+  const contorno = new THREE.Mesh(geo, matContorno);
+  contorno.scale.setScalar(espessura);
+  m.add(contorno);
+  return m;
+}
+const simples = (geo, cor) => {
+  const m = new THREE.Mesh(geo, toon(cor));
+  m.castShadow = m.receiveShadow = true;
+  return m;
+};
+
+// ===================================================================
+// 5. O MAPA — ilha flutuante com árvores-pirulito e cogumelos
+// ===================================================================
+const ilha = new THREE.Group();
+cena.add(ilha);
+
+const grama = peca(new THREE.CylinderGeometry(13, 12.4, 1.6, 40), 0x86D94B, 1.03);
+grama.position.y = -0.8; ilha.add(grama);
+
+const barranco = peca(new THREE.CylinderGeometry(12.4, 9.6, 2.6, 40), 0xB3703F, 1.03);
+barranco.position.y = -2.9; ilha.add(barranco);
+
+const ponta = peca(new THREE.ConeGeometry(9.6, 11, 40), 0x8E5631, 1.04);
+ponta.position.y = -9.7; ponta.rotation.x = Math.PI; ilha.add(ponta);
+
+const trilha = peca(new THREE.CylinderGeometry(6.6, 6.7, 0.3, 36), 0xF6E7B8, 1.02);
+trilha.position.y = 0.08; ilha.add(trilha);
+
+let semente = 13;
+const rnd = () => (semente = semente * 16807 % 2147483647) / 2147483647;
+
+// pedrinhas penduradas na base
+const geoPedra = new THREE.DodecahedronGeometry(0.6, 0);
+for (let i = 0; i < 14; i++) {
+  const a = rnd() * Math.PI * 2, r = 4 + rnd() * 7;
+  const p = peca(geoPedra, 0x9A6038, 1.1);
+  p.position.set(Math.cos(a) * r, -6 - rnd() * 7, Math.sin(a) * r);
+  p.scale.setScalar(0.5 + rnd() * 1.1);
+  p.rotation.set(rnd() * 3, rnd() * 3, rnd() * 3);
+  ilha.add(p);
+}
+
+const geoBola = new THREE.SphereGeometry(1, 14, 12);
+const geoTronco = new THREE.CylinderGeometry(0.26, 0.42, 2.6, 8);
+const VERDES = [0x5FC03A, 0x7FD94F, 0x44A72F];
+const CHAPEUS = [0xFF6B6B, 0xFFC93C, 0x9B7BD4, 0x3FC9B4];
+
+for (let i = 0; i < 16; i++) {
+  const a = rnd() * Math.PI * 2, r = 7.6 + rnd() * 4.2;
+  const g = new THREE.Group();
+  const tronco = peca(geoTronco, 0x9A6038, 1.1); tronco.position.y = 1.3; g.add(tronco);
+  const copa = peca(geoBola, VERDES[(rnd() * 3) | 0], 1.08);
+  copa.position.y = 3.2; copa.scale.set(1.5, 1.25, 1.5); g.add(copa);
+  const copinha = peca(geoBola, VERDES[(rnd() * 3) | 0], 1.1);
+  copinha.position.set(0.7, 2.6, 0.4); copinha.scale.setScalar(0.8); g.add(copinha);
+  g.position.set(Math.cos(a) * r, 0, Math.sin(a) * r);
+  g.scale.setScalar(0.8 + rnd() * 0.7);
+  ilha.add(g);
+}
+
+for (let i = 0; i < 13; i++) {
+  const a = rnd() * Math.PI * 2, r = 7 + rnd() * 5;
+  const g = new THREE.Group();
+  const pe = peca(new THREE.CylinderGeometry(0.3, 0.38, 1, 10), 0xFFF3DC, 1.1);
+  pe.position.y = 0.5; g.add(pe);
+  const chapeu = peca(new THREE.SphereGeometry(0.85, 16, 10, 0, Math.PI * 2, 0, Math.PI * 0.55),
+                      CHAPEUS[(rnd() * 4) | 0], 1.08);
+  chapeu.position.y = 1.05; chapeu.scale.y = 0.9; g.add(chapeu);
+  for (let j = 0; j < 4; j++) {
+    const pinta = simples(new THREE.SphereGeometry(0.17, 10, 8), 0xFFF6E3);
+    const b = rnd() * Math.PI * 2, rr = 0.3 + rnd() * 0.4;
+    pinta.position.set(Math.cos(b) * rr, 1.33 - rr * 0.25, Math.sin(b) * rr);
+    pinta.scale.y = 0.5; g.add(pinta);
+  }
+  g.position.set(Math.cos(a) * r, 0, Math.sin(a) * r);
+  g.scale.setScalar(0.65 + rnd() * 0.6);
+  ilha.add(g);
+}
+
+// o personagem pisa direto na trilha de areia (topo em y ≈ 0.23)
+const ALTURA_PALCO = 0.23;
+
+// nuvens fofas girando ao redor
+const nuvens = [];
+for (let i = 0; i < 11; i++) {
+  const n = new THREE.Group();
+  const qtd = 3 + ((rnd() * 3) | 0);
+  for (let j = 0; j < qtd; j++) {
+    const b = new THREE.Mesh(geoBola, toon(0xFFFFFF));
+    b.position.set((j - qtd / 2) * 1.5 + rnd(), rnd() * 0.7, rnd() * 1.2 - 0.6);
+    b.scale.setScalar(1 + rnd() * 0.9);
+    n.add(b);
+  }
+  const a = rnd() * Math.PI * 2, r = 20 + rnd() * 22;
+  n.position.set(Math.cos(a) * r, 3 + rnd() * 16, Math.sin(a) * r);
+  n.scale.setScalar(1 + rnd() * 1.3);
+  n.userData = { ang: a, raio: r, giro: (rnd() - .5) * .035, alt: n.position.y, fase: rnd() * 6 };
+  nuvens.push(n); cena.add(n);
+}
+
+// faíscas douradas flutuando
+const faiscas = [];
+const geoFaisca = new THREE.OctahedronGeometry(0.17, 0);
+for (let i = 0; i < 26; i++) {
+  const f = new THREE.Mesh(geoFaisca, toon(0xFFD93C));
+  const a = rnd() * Math.PI * 2, r = 3 + rnd() * 9;
+  f.position.set(Math.cos(a) * r, 1.5 + rnd() * 5, Math.sin(a) * r);
+  f.userData = { base: f.position.y, fase: rnd() * 6.3 };
+  faiscas.push(f); cena.add(f);
+}
+
+// ===================================================================
+// 6. MODELO 3D E ANIMAÇÕES
+// ===================================================================
+const draco = new DRACOLoader();
+draco.setDecoderPath('https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/libs/draco/');
+
+const carregador = new GLTFLoader();
+carregador.setDRACOLoader(draco);
+
+const elNome = document.getElementById('nome');
+const elOrigem = document.getElementById('origem');
+const elAcoes = document.getElementById('acoes');
+const elStatus = document.getElementById('status');
+
+let mixer = null, acaoAtual = null;
+
+carregador.load(MODELO, gltf => {
+  const modelo = gltf.scene;
+  modelo.traverse(o => { if (o.isMesh) o.castShadow = o.receiveShadow = true; });
+
+  // normaliza o tamanho (~TAMANHO unidades) e apoia no chão
+  const TAMANHO = 5;
+  modelo.updateMatrixWorld(true);
+  const cx = new THREE.Box3().setFromObject(modelo, true);
+  const tam = cx.getSize(new THREE.Vector3());
+  modelo.scale.setScalar(TAMANHO / (Math.max(tam.x, tam.y, tam.z) || 1));
+
+  modelo.updateMatrixWorld(true);
+  const cx2 = new THREE.Box3().setFromObject(modelo, true);
+  const centro = cx2.getCenter(new THREE.Vector3());
+  modelo.position.x -= centro.x;
+  modelo.position.z -= centro.z;
+  modelo.position.y += ALTURA_PALCO - cx2.min.y;
+  ilha.add(modelo);
+
+  mixer = new THREE.AnimationMixer(modelo);
+  const ACOES = ['Idle', 'Walking', 'Running', 'Jump', 'Dance'];   // as 5 ações usadas
+  const clipes = (gltf.animations || []).filter(c => ACOES.includes(c.name))
+    .sort((a, b) => ACOES.indexOf(a.name) - ACOES.indexOf(b.name));
+
+  elNome.textContent = MODELO.split('/').pop();
+  elOrigem.textContent = clipes.length + ' ação(ões) no arquivo';
+
+  clipes.forEach((clipe, i) => {
+    const b = document.createElement('button');
+    b.innerHTML = '<span class="bolinha"></span><span></span><span class="dur"></span>';
+    b.children[1].textContent = clipe.name || 'Ação ' + (i + 1);
+    b.children[2].textContent = clipe.duration.toFixed(2) + 's';
+    b.onclick = () => {
+      const acao = mixer.clipAction(clipe);
+      acao.reset().setLoop(THREE.LoopRepeat, Infinity);
+      if (acaoAtual && acaoAtual !== acao) acaoAtual.crossFadeTo(acao, .3, false);
+      acao.play();
+      acaoAtual = acao;
+      [...elAcoes.children].forEach(x => x.classList.remove('ativo'));
+      b.classList.add('ativo');
+    };
+    elAcoes.appendChild(b);
+  });
+
+  if (clipes.length) elAcoes.firstChild.click();
+
+  elStatus.textContent = clipes.length >= 3
+    ? clipes.length + ' ações de animação carregadas.'
+    : 'Apenas ' + clipes.length + ' ação(ões) encontrada(s).';
+},
+undefined,
+erro => {
+  elNome.textContent = 'Erro ao carregar';
+  elStatus.textContent = 'Não foi possível carregar o modelo (use um servidor local). ' + erro.message;
+});
+
+// ===================================================================
+// 7. LAÇO DE RENDERIZAÇÃO
+// ===================================================================
+const relogio = new THREE.Clock();
+let t = 0;
+
+function laco() {
+  requestAnimationFrame(laco);
+  const dt = relogio.getDelta();
+  t += dt;
+
+  ilha.position.y = Math.sin(t * 0.5) * 0.18;     // a ilha boia no ar
+  ilha.rotation.z = Math.sin(t * 0.33) * 0.008;
+
+  nuvens.forEach(n => {
+    n.userData.ang += n.userData.giro * dt;
+    n.position.x = Math.cos(n.userData.ang) * n.userData.raio;
+    n.position.z = Math.sin(n.userData.ang) * n.userData.raio;
+    n.position.y = n.userData.alt + Math.sin(t * .6 + n.userData.fase) * .5;
+  });
+
+  faiscas.forEach(f => {
+    f.position.y = f.userData.base + Math.sin(t * 1.4 + f.userData.fase) * .45;
+    f.rotation.y += dt * 1.6;
+    f.rotation.x += dt * .9;
+  });
+
+  if (mixer) mixer.update(dt);
+  controles.update();
+  renderizador.render(cena, camera);
+}
+laco();
+
+addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderizador.setSize(innerWidth, innerHeight);
+});
+</script>
+</body>
+</html>
