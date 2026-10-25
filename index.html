@@ -33,6 +33,10 @@
   .dur{margin-left:auto;font-size:.7rem;color:#7A6388}
   button.ativo .dur{color:#06302b}
 
+  #abas{display:flex;gap:5px;margin:0 0 12px}
+  button.aba{margin:0;justify-content:center;text-align:center;padding:6px 4px;font-size:.78rem}
+  button.aba.ativo{background:#FFC93C;border-color:#D9A51F;color:#3B2B4A}
+  .sub a{color:#7A6388}
   #status{font-size:.73rem;line-height:1.5;color:#7A6388;margin:12px 0 0}
   #dica{position:fixed;left:18px;bottom:16px;font-family:"Fredoka",system-ui,sans-serif;font-weight:500;
         font-size:.74rem;color:#FFFBF2;text-shadow:0 2px 6px rgba(59,43,74,.5)}
@@ -44,6 +48,7 @@
 <div id="painel">
   <h2 id="nome">Carregando…</h2>
   <p class="sub" id="origem"></p>
+  <div id="abas"></div>
   <p class="rotulo">Ações de animação</p>
   <div id="acoes"></div>
   <p id="status"></p>
@@ -68,7 +73,36 @@ import { DRACOLoader }   from 'three/addons/loaders/DRACOLoader.js';
 // ===================================================================
 // 1. CONFIGURAÇÃO — caminho do modelo
 // ===================================================================
-const MODELO = './modelos/robo.glb';
+const PERSONAGENS = [
+  {
+    membro: 'Membro 1',
+    nome: 'Mini Simple Character',
+    arquivo: './modelos/mini_simple_character_free_demo__animations.glb',
+    autor: 'joaobaltieri',
+    licenca: 'CC BY 4.0',
+    url: 'https://sketchfab.com/3d-models/mini-simple-character-free-demo-animations-ffcb3490d35148a5951d3b32d1e5a7cb',
+    x: -3.2, z: 2.2, giro: 0.9
+  },
+  {
+    membro: 'Membro 2',
+    nome: 'Stylized Low Poly Character',
+    arquivo: './modelos/stylized_low_poly_animated_character.glb',
+    autor: 'Karthik Naidu',
+    licenca: 'CC BY 4.0',
+    url: 'https://sketchfab.com/3d-models/stylized-low-poly-animated-character-a011a38d65274acf8008939b7d412cb9',
+    x: 3.2, z: -2.2, giro: 0.4
+  },
+  {
+    membro: 'Membro 3',
+    nome: 'Robot Expressive',
+    arquivo: './modelos/robo.glb',
+    autor: 'Tomás Laulhé',
+    licenca: 'CC0',
+    url: 'https://github.com/mrdoob/three.js/tree/dev/examples/models/gltf/RobotExpressive',
+    acoes: ['Idle', 'Walking', 'Running', 'Jump', 'Dance'],
+    x: 0, z: 0, giro: 0.6
+  }
+];
 
 // ===================================================================
 // 2. CENA, CÂMERA, RENDERIZADOR
@@ -222,7 +256,7 @@ for (let i = 0; i < 13; i++) {
 }
 
 // o personagem pisa direto na trilha de areia (topo em y ≈ 0.23)
-const ALTURA_PALCO = 0.23;
+const ALTURA_CHAO = 0.23;
 
 // nuvens fofas girando ao redor
 const nuvens = [];
@@ -254,7 +288,7 @@ for (let i = 0; i < 26; i++) {
 }
 
 // ===================================================================
-// 6. MODELO 3D E ANIMAÇÕES
+// 6. PERSONAGENS (um por membro) E SUAS ANIMAÇÕES
 // ===================================================================
 const draco = new DRACOLoader();
 draco.setDecoderPath('https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/libs/draco/');
@@ -264,66 +298,91 @@ carregador.setDRACOLoader(draco);
 
 const elNome = document.getElementById('nome');
 const elOrigem = document.getElementById('origem');
+const elAbas = document.getElementById('abas');
 const elAcoes = document.getElementById('acoes');
 const elStatus = document.getElementById('status');
 
-let mixer = null, acaoAtual = null;
+const ALTURA_PERSONAGEM = 3.2;
+const personagens = [];
+let selecionado = -1;
 
-carregador.load(MODELO, gltf => {
-  const modelo = gltf.scene;
-  modelo.traverse(o => { if (o.isMesh) o.castShadow = o.receiveShadow = true; });
+function carregarPersonagem(cfg) {
+  const p = { cfg, grupo: null, mixer: null, acao: null, clipes: [] };
+  const i = personagens.push(p) - 1;
 
-  // normaliza o tamanho (~TAMANHO unidades) e apoia no chão
-  const TAMANHO = 5;
-  modelo.updateMatrixWorld(true);
-  const cx = new THREE.Box3().setFromObject(modelo, true);
-  const tam = cx.getSize(new THREE.Vector3());
-  modelo.scale.setScalar(TAMANHO / (Math.max(tam.x, tam.y, tam.z) || 1));
+  const aba = document.createElement('button');
+  aba.className = 'aba';
+  aba.textContent = cfg.membro;
+  aba.onclick = () => selecionar(i);
+  elAbas.appendChild(aba);
 
-  modelo.updateMatrixWorld(true);
-  const cx2 = new THREE.Box3().setFromObject(modelo, true);
-  const centro = cx2.getCenter(new THREE.Vector3());
-  modelo.position.x -= centro.x;
-  modelo.position.z -= centro.z;
-  modelo.position.y += ALTURA_PALCO - cx2.min.y;
-  ilha.add(modelo);
+  carregador.load(cfg.arquivo, gltf => {
+    const modelo = gltf.scene;
+    modelo.traverse(o => { if (o.isMesh) o.castShadow = o.receiveShadow = true; });
 
-  mixer = new THREE.AnimationMixer(modelo);
-  const ACOES = ['Idle', 'Walking', 'Running', 'Jump', 'Dance'];   // as 5 ações usadas
-  const clipes = (gltf.animations || []).filter(c => ACOES.includes(c.name))
-    .sort((a, b) => ACOES.indexOf(a.name) - ACOES.indexOf(b.name));
+    // escala pela altura real (vértices já deformados pelo esqueleto)
+    modelo.updateMatrixWorld(true);
+    const tam = new THREE.Box3().setFromObject(modelo, true).getSize(new THREE.Vector3());
+    modelo.scale.setScalar(ALTURA_PERSONAGEM / (tam.y || 1));
 
-  elNome.textContent = MODELO.split('/').pop();
-  elOrigem.textContent = clipes.length + ' ação(ões) no arquivo';
+    // centraliza no próprio eixo e apoia os pés no chão
+    modelo.updateMatrixWorld(true);
+    const cx = new THREE.Box3().setFromObject(modelo, true);
+    const centro = cx.getCenter(new THREE.Vector3());
+    modelo.position.x -= centro.x;
+    modelo.position.z -= centro.z;
+    modelo.position.y -= cx.min.y;
 
-  clipes.forEach((clipe, i) => {
+    p.grupo = new THREE.Group();
+    p.grupo.add(modelo);
+    p.grupo.position.set(cfg.x, ALTURA_CHAO, cfg.z);
+    p.grupo.rotation.y = cfg.giro;
+    ilha.add(p.grupo);
+
+    p.mixer = new THREE.AnimationMixer(modelo);
+    p.clipes = (gltf.animations || []).filter(c => !cfg.acoes || cfg.acoes.includes(c.name));
+    p.acao = p.mixer.clipAction(p.clipes.find(c => /idle/i.test(c.name)) || p.clipes[0]).play();
+    if (selecionado === -1) selecionar(i); else if (selecionado === i) selecionar(i);
+  },
+  undefined,
+  erro => {
+    elStatus.textContent = 'Não foi possível carregar ' + cfg.arquivo + ' (use um servidor local). ' + erro.message;
+  });
+}
+
+function tocar(p, clipe, botao) {
+  const nova = p.mixer.clipAction(clipe);
+  nova.reset().setLoop(THREE.LoopRepeat, Infinity);
+  if (p.acao && p.acao !== nova) p.acao.crossFadeTo(nova, .3, false);
+  nova.play();
+  p.acao = nova;
+  [...elAcoes.children].forEach(x => x.classList.remove('ativo'));
+  botao.classList.add('ativo');
+}
+
+function selecionar(i) {
+  selecionado = i;
+  const p = personagens[i];
+  [...elAbas.children].forEach((x, k) => x.classList.toggle('ativo', k === i));
+  elAcoes.innerHTML = '';
+  elNome.textContent = p.cfg.nome;
+  elOrigem.innerHTML = 'Modelo de <a target="_blank" rel="noopener" href="' + p.cfg.url + '">' +
+    p.cfg.autor + '</a> · ' + p.cfg.licenca;
+  if (!p.mixer) { elStatus.textContent = 'Carregando…'; return; }
+
+  p.clipes.forEach(clipe => {
     const b = document.createElement('button');
     b.innerHTML = '<span class="bolinha"></span><span></span><span class="dur"></span>';
-    b.children[1].textContent = clipe.name || 'Ação ' + (i + 1);
+    b.children[1].textContent = clipe.name;
     b.children[2].textContent = clipe.duration.toFixed(2) + 's';
-    b.onclick = () => {
-      const acao = mixer.clipAction(clipe);
-      acao.reset().setLoop(THREE.LoopRepeat, Infinity);
-      if (acaoAtual && acaoAtual !== acao) acaoAtual.crossFadeTo(acao, .3, false);
-      acao.play();
-      acaoAtual = acao;
-      [...elAcoes.children].forEach(x => x.classList.remove('ativo'));
-      b.classList.add('ativo');
-    };
+    b.onclick = () => tocar(p, clipe, b);
+    if (p.acao && p.acao.getClip() === clipe) b.classList.add('ativo');
     elAcoes.appendChild(b);
   });
+  elStatus.textContent = p.clipes.length + ' ações de animação carregadas.';
+}
 
-  if (clipes.length) elAcoes.firstChild.click();
-
-  elStatus.textContent = clipes.length >= 3
-    ? clipes.length + ' ações de animação carregadas.'
-    : 'Apenas ' + clipes.length + ' ação(ões) encontrada(s).';
-},
-undefined,
-erro => {
-  elNome.textContent = 'Erro ao carregar';
-  elStatus.textContent = 'Não foi possível carregar o modelo (use um servidor local). ' + erro.message;
-});
+PERSONAGENS.forEach(carregarPersonagem);
 
 // ===================================================================
 // 7. LAÇO DE RENDERIZAÇÃO
@@ -352,7 +411,7 @@ function laco() {
     f.rotation.x += dt * .9;
   });
 
-  if (mixer) mixer.update(dt);
+  personagens.forEach(p => p.mixer && p.mixer.update(dt));
   controles.update();
   renderizador.render(cena, camera);
 }
